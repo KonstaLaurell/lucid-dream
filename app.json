@@ -1,6 +1,6 @@
 {
   "expo": {
-    "name": "lucid-dream",
+    "name": "lucid dream",
     "slug": "lucid-dream",
     "version": "1.0.0",
     "orientation": "portrait",
@@ -16,7 +16,8 @@
         "foregroundImage": "./assets/images/adaptive-icon.png",
         "backgroundColor": "#ffffff"
       },
-      "edgeToEdgeEnabled": true
+      "edgeToEdgeEnabled": true,
+      "package": "com.tyhjyys.luciddream"
     },
     "web": {
       "bundler": "metro",
@@ -37,6 +38,12 @@
     ],
     "experiments": {
       "typedRoutes": true
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "a9a3ef25-03b5-43c7-97cb-4da99ab8b20d"
+      }
     }
   }
 }
