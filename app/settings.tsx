@@ -1,8 +1,9 @@
+import notifee, { AndroidImportance, RepeatFrequency, TimestampTrigger, TriggerType } from '@notifee/react-native';
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import DateTimePicker from "@react-native-community/datetimepicker";
-import * as Notifications from "expo-notifications";
 import { useEffect, useState } from "react";
 import {
+	Alert,
 	Button,
 	Platform,
 	ScrollView,
@@ -13,466 +14,518 @@ import {
 } from "react-native";
 import { useTheme } from "../theme/ThemeContext";
 
-// Configure notifications
-Notifications.setNotificationHandler({
-	handleNotification: async () => ({
-		shouldShowAlert: true,
-		shouldPlaySound: true,
-		shouldSetBadge: false,
-	}),
-});
-
 export default function Settings() {
-	const { mode, toggle, colors, fonts } = useTheme();
+  const { mode, toggle, colors, fonts } = useTheme();
+  
+  // State management
+  const [journalEnabled, setJournalEnabled] = useState(false);
+  const [dreamCheckEnabled, setDreamCheckEnabled] = useState(false);
+  const [journalTime, setJournalTime] = useState(new Date());
+  const [startTime, setStartTime] = useState(new Date());
+  const [endTime, setEndTime] = useState(new Date());
+  const [showPicker, setShowPicker] = useState<{
+    type: 'journal' | 'start' | 'end' | null;
+    visible: boolean;
+  }>({
+    type: null,
+    visible: false,
+  });
 
-	const [journalEnabled, setJournalEnabled] = useState(false);
-	const [dreamCheckEnabled, setDreamCheckEnabled] = useState(false);
-	const [journalTime, setJournalTime] = useState(new Date());
-	const [startTime, setStartTime] = useState(new Date());
-	const [endTime, setEndTime] = useState(new Date());
+  // Load settings on mount
+  useEffect(() => {
+    loadSettings();
+    requestPermissions();
+    createNotificationChannels();
+  }, []);
 
-	const [showPicker, setShowPicker] = useState({
-		type: null, // 'journal', 'start', or 'end'
-		visible: false,
-	});
+  // Create notification channels for Android
+  const createNotificationChannels = async () => {
+    if (Platform.OS === 'android') {
+      await notifee.createChannel({
+        id: 'dream-journal',
+        name: 'Dream Journal Reminders',
+        importance: AndroidImportance.HIGH,
+      });
 
-	// Load saved settings
-	useEffect(() => {
-		loadSettings();
-	}, []);
+      await notifee.createChannel({
+        id: 'reality-checks',
+        name: 'Reality Check Reminders',
+        importance: AndroidImportance.HIGH,
+      });
+    }
+  };
 
-	const loadSettings = async () => {
-		try {
-			const savedSettings = await AsyncStorage.getItem(
-				"notificationSettings"
-			);
-			if (savedSettings) {
-				const settings = JSON.parse(savedSettings);
-				setJournalEnabled(settings.journalEnabled);
-				setDreamCheckEnabled(settings.dreamCheckEnabled);
-				setJournalTime(new Date(settings.journalTime));
-				setStartTime(new Date(settings.startTime));
-				setEndTime(new Date(settings.endTime));
+  // Request notification permissions
+  const requestPermissions = async () => {
+    await notifee.requestPermission();
+  };
 
-				if (settings.journalEnabled) {
-					scheduleJournalNotification(new Date(settings.journalTime));
-				}
-				if (settings.dreamCheckEnabled) {
-					scheduleHourlyChecks(
-						new Date(settings.startTime),
-						new Date(settings.endTime)
-					);
-				}
-			}
-		} catch (error) {
-			console.error("Error loading settings:", error);
-		}
-	};
+  // Load saved settings
+  const loadSettings = async () => {
+    try {
+      const savedSettings = await AsyncStorage.getItem("notificationSettings");
+      if (savedSettings) {
+        const settings = JSON.parse(savedSettings);
+        setJournalEnabled(settings.journalEnabled || false);
+        setDreamCheckEnabled(settings.dreamCheckEnabled || false);
+        
+        if (settings.journalTime) {
+          setJournalTime(new Date(settings.journalTime));
+        }
+        
+        if (settings.startTime) {
+          setStartTime(new Date(settings.startTime));
+        }
+        
+        if (settings.endTime) {
+          setEndTime(new Date(settings.endTime));
+        }
+      }
+    } catch (error) {
+      console.error("Error loading settings:", error);
+      Alert.alert("Error", "Failed to load settings");
+    }
+  };
 
-	const saveSettings = async () => {
-		try {
-			const settings = {
-				journalEnabled,
-				dreamCheckEnabled,
-				journalTime: journalTime.toISOString(),
-				startTime: startTime.toISOString(),
-				endTime: endTime.toISOString(),
-			};
-			await AsyncStorage.setItem(
-				"notificationSettings",
-				JSON.stringify(settings)
-			);
-		} catch (error) {
-			console.error("Error saving settings:", error);
-		}
-	};
+  // Save settings
+  const saveSettings = async () => {
+    try {
+      const settings = {
+        journalEnabled,
+        dreamCheckEnabled,
+        journalTime: journalTime.toISOString(),
+        startTime: startTime.toISOString(),
+        endTime: endTime.toISOString(),
+      };
+      await AsyncStorage.setItem("notificationSettings", JSON.stringify(settings));
+    } catch (error) {
+      console.error("Error saving settings:", error);
+      Alert.alert("Error", "Failed to save settings");
+    }
+  };
 
-	useEffect(() => {
-		(async () => {
-			const { status } = await Notifications.requestPermissionsAsync();
-			if (status !== "granted") {
-				alert(
-					"You need to grant notification permissions to use this feature."
-				);
-				setJournalEnabled(false);
-				setDreamCheckEnabled(false);
-			}
-		})();
-	}, []);
+  // Cancel journal notifications
+  const cancelJournalNotifications = async () => {
+    const notifications = await notifee.getTriggerNotifications();
+    notifications.forEach(notification => {
+      const title = notification.notification.title;
+      if (title && title.includes("🌙 Dream Journal") && notification.notification.id) {
+        notifee.cancelTriggerNotification(notification.notification.id);
+      }
+    });
+  };
 
-	const loadNotificationSettings = async () => {
-		try {
-			const settings = await AsyncStorage.getItem('notificationSettings');
-			if (settings) {
-				const { journalEnabled: savedJournalEnabled, dreamCheckEnabled: savedDreamCheckEnabled, journalTime: savedJournalTime, startTime: savedStartTime, endTime: savedEndTime } = JSON.parse(settings);
-				setJournalEnabled(savedJournalEnabled);
-				setDreamCheckEnabled(savedDreamCheckEnabled);
-				if (savedJournalTime) setJournalTime(new Date(savedJournalTime));
-				if (savedStartTime) setStartTime(new Date(savedStartTime));
-				if (savedEndTime) setEndTime(new Date(savedEndTime));
-			}
-		} catch (error) {
-			console.error('Error loading notification settings:', error);
-		}
-	};
+  // Cancel hourly check notifications
+  const cancelHourlyCheckNotifications = async () => {
+    const notifications = await notifee.getTriggerNotifications();
+    notifications.forEach(notification => {
+      const title = notification.notification.title;
+      if (title && title.includes("🌀 Dream Reality Check") && notification.notification.id) {
+        notifee.cancelTriggerNotification(notification.notification.id);
+      }
+    });
+  };
 
-	const saveNotificationSettings = async () => {
-		try {
-			const settings = {
-				journalEnabled,
-				dreamCheckEnabled,
-				journalTime: journalTime.toISOString(),
-				startTime: startTime.toISOString(),
-				endTime: endTime.toISOString(),
-			};
-			await AsyncStorage.setItem('notificationSettings', JSON.stringify(settings));
-		} catch (error) {
-			console.error('Error saving notification settings:', error);
-		}
-	};
+  // Schedule journal notification
+  const scheduleJournalNotification = async (time: Date) => {
+    try {
+      await cancelJournalNotifications();
+      
+      // Create a new date for today at the specified time
+      const now = new Date();
+      const scheduledTime = new Date(time);
+      scheduledTime.setFullYear(now.getFullYear(), now.getMonth(), now.getDate());
+      
+      // Only schedule if the time is in the future
+      if (scheduledTime.getTime() > now.getTime()) {
+        const trigger: TimestampTrigger = {
+          type: TriggerType.TIMESTAMP,
+          timestamp: scheduledTime.getTime(),
+          repeatFrequency: RepeatFrequency.DAILY,
+        };
 
-	const scheduleJournalNotification = async (time) => {
-		try {
-			await Notifications.cancelAllScheduledNotificationsAsync();
-			const trigger = new Date(time);
+        await notifee.createTriggerNotification(
+          {
+            title: "🌙 Dream Journal Reminder",
+            body: "Don't forget to write down your dreams!",
+            android: {
+              channelId: 'dream-journal',
+              pressAction: {
+                id: 'default',
+              },
+            },
+          },
+          trigger,
+        );
 
-			await Notifications.scheduleNotificationAsync({
-				content: {
-					title: "🌙 Dream Journal Reminder",
-					body: "Don't forget to write down your dream!",
-				},
-				trigger: {
-					hour: trigger.getHours(),
-					minute: trigger.getMinutes(),
-					repeats: true,
-				},
-			});
-			saveSettings();
-		} catch (error) {
-			console.error("Error scheduling journal notification:", error);
-			alert("Failed to schedule notification. Please try again.");
-		}
-	};
+        saveSettings();
+        Alert.alert("Success", "Journal reminder scheduled!");
+      } else {
+        Alert.alert("Info", "The selected time has already passed for today. Please select a future time.");
+      }
+    } catch (error) {
+      console.error("Error scheduling journal notification:", error);
+      Alert.alert("Error", "Failed to schedule journal reminder");
+    }
+  };
 
-	const scheduleHourlyChecks = async (start, end) => {
-		try {
-			await Notifications.cancelAllScheduledNotificationsAsync();
-			const startHour = start.getHours();
-			const endHour = end.getHours();
+  // Schedule hourly reality checks
+  const scheduleHourlyChecks = async (start: Date, end: Date) => {
+    try {
+      await cancelHourlyCheckNotifications();
+      
+      const startHour = start.getHours();
+      const endHour = end.getHours();
+      
+      if (startHour >= endHour) {
+        Alert.alert("Error", "End time must be after start time");
+        return;
+      }
 
-			for (let hour = startHour; hour <= endHour; hour++) {
-				await Notifications.scheduleNotificationAsync({
-					content: {
-						title: "🌀 Dream Reality Check",
-						body: "Are you dreaming right now?",
-					},
-					trigger: {
-						hour,
-						minute: 0,
-						repeats: true,
-					},
-				});
-			}
-			saveSettings();
-		} catch (error) {
-			console.error("Error scheduling hourly checks:", error);
-			alert("Failed to schedule notifications. Please try again.");
-		}
-		await saveNotificationSettings();
-	};
+      const now = new Date();
+      let scheduledCount = 0;
 
-	const handleTimeChange = (event, selectedDate) => {
-		setShowPicker({ type: null, visible: false });
-		if (!selectedDate) return;
+      for (let hour = startHour; hour <= endHour; hour++) {
+        // Create a new date for this hour
+        const scheduledTime = new Date(now);
+        scheduledTime.setHours(hour, 0, 0, 0);
 
-		switch (showPicker.type) {
-			case "journal":
-				setJournalTime(selectedDate);
-				scheduleJournalNotification(selectedDate);
-				break;
-			case "start":
-				setStartTime(selectedDate);
-				break;
-			case "end":
-				setEndTime(selectedDate);
-				break;
-		}
-	};
+        // Only schedule if the time is in the future
+        if (scheduledTime.getTime() > now.getTime()) {
+          const trigger: TimestampTrigger = {
+            type: TriggerType.TIMESTAMP,
+            timestamp: scheduledTime.getTime(),
+            repeatFrequency: RepeatFrequency.DAILY,
+          };
 
-	const applyDreamCheckSchedule = () => {
-		if (dreamCheckEnabled) {
-			scheduleHourlyChecks(startTime, endTime);
-		}
-	};
+          await notifee.createTriggerNotification(
+            {
+              title: "🌀 Dream Reality Check",
+              body: "Are you dreaming right now?",
+              android: {
+                channelId: 'reality-checks',
+                pressAction: {
+                  id: 'default',
+                },
+              },
+            },
+            trigger,
+          );
+          scheduledCount++;
+        }
+      }
 
-	const handleJournalNotificationToggle = async (val: boolean) => {
-		if (val) {
-			Alert.alert(
-				"Enable Journal Reminder",
-				"This will send you a daily reminder to write down your dreams. Would you like to continue?",
-				[
-					{
-						text: "Cancel",
-						style: "cancel",
-						onPress: () => setJournalEnabled(false),
-					},
-					{
-						text: "Enable",
-						onPress: async () => {
-							await scheduleJournalNotification(journalTime);
-							await saveNotificationSettings();
-						},
-					},
-				]
-			);
-		} else {
-			Alert.alert(
-				"Disable Journal Reminder",
-				"Are you sure you want to disable the journal reminder?",
-				[
-					{
-						text: "Cancel",
-						style: "cancel",
-						onPress: () => setJournalEnabled(true),
-					},
-					{
-						text: "Disable",
-						onPress: async () => {
-							await Notifications.cancelAllScheduledNotificationsAsync();
-							await saveNotificationSettings();
-						},
-					},
-				]
-			);
-		}
-	};
+      saveSettings();
+      if (scheduledCount > 0) {
+        Alert.alert("Success", `Scheduled ${scheduledCount} reality checks!`);
+      } else {
+        Alert.alert("Info", "All selected times have already passed. Please select future times.");
+      }
+    } catch (error) {
+      console.error("Error scheduling hourly checks:", error);
+      Alert.alert("Error", "Failed to schedule reality checks");
+    }
+  };
 
-	const handleDreamCheckToggle = async (val: boolean) => {
-		if (val) {
-			Alert.alert(
-				"Enable Reality Checks",
-				"This will send you hourly reality check notifications. Would you like to continue?",
-				[
-					{
-						text: "Cancel",
-						style: "cancel",
-						onPress: () => setDreamCheckEnabled(false),
-					},
-					{
-						text: "Enable",
-						onPress: async () => {
-							await scheduleHourlyChecks(startTime, endTime);
-							await saveNotificationSettings();
-						},
-					},
-				]
-			);
-		} else {
-			Alert.alert(
-				"Disable Reality Checks",
-				"Are you sure you want to disable the reality check notifications?",
-				[
-					{
-						text: "Cancel",
-						style: "cancel",
-						onPress: () => setDreamCheckEnabled(true),
-					},
-					{
-						text: "Disable",
-						onPress: async () => {
-							await Notifications.cancelAllScheduledNotificationsAsync();
-							await saveNotificationSettings();
-						},
-					},
-				]
-			);
-		}
-	};
+  // Handle time picker change
+  const handleTimeChange = (event: any, selectedDate: Date | undefined) => {
+    if (!selectedDate) return;
+    
+    switch (showPicker.type) {
+      case "journal":
+        setJournalTime(selectedDate);
+        scheduleJournalNotification(selectedDate);
+        break;
+      case "start":
+        setStartTime(selectedDate);
+        break;
+      case "end":
+        setEndTime(selectedDate);
+        break;
+    }
+    
+    setShowPicker({ type: null, visible: false });
+  };
 
-	const Card = ({ children }) => (
-		<View
-			style={{
-				backgroundColor: colors.cardBackground,
-				padding: 16,
-				borderRadius: 16,
-				marginBottom: 20,
-				shadowColor: colors.shadow,
-				shadowOpacity: 0.2,
-				shadowRadius: 6,
-				elevation: 3,
-			}}>
-			{children}
-		</View>
-	);
+  // Apply dream check schedule
+  const applyDreamCheckSchedule = () => {
+    if (dreamCheckEnabled) {
+      scheduleHourlyChecks(startTime, endTime);
+    }
+  };
 
-	return (
-		<ScrollView
-			contentContainerStyle={{
-				flexGrow: 1,
-				backgroundColor: colors.background,
-				padding: 20,
-			}}>
-			<Text
-				style={{
-					fontSize: 28,
-					fontWeight: "bold",
-					color: colors.text,
-					fontFamily: fonts.headerFont,
-					marginBottom: 30,
-				}}>
-				⚙ Settings
-			</Text>
+  // Toggle handlers
+  const handleJournalToggle = async (val: boolean) => {
+    if (val) {
+      Alert.alert(
+        "Enable Journal Reminder",
+        "This will send you a daily reminder to write down your dreams. Would you like to continue?",
+        [
+          { text: "Cancel", style: "cancel" },
+          {
+            text: "Enable",
+            onPress: async () => {
+              setJournalEnabled(true);
+              await scheduleJournalNotification(journalTime);
+              await saveSettings();
+            },
+          },
+        ]
+      );
+    } else {
+      Alert.alert(
+        "Disable Journal Reminder",
+        "Are you sure you want to disable the journal reminder?",
+        [
+          { text: "Cancel", style: "cancel" },
+          {
+            text: "Disable",
+            onPress: async () => {
+              setJournalEnabled(false);
+              await cancelJournalNotifications();
+              await saveSettings();
+            },
+          },
+        ]
+      );
+    }
+  };
 
-			{/* Dream Journal Reminder */}
-			<Card>
-				<Text
-					style={{
-						fontSize: 16,
-						color: colors.text,
-						fontFamily: fonts.bodyFont,
-						marginBottom: 10,
-					}}>
-					Dream Journal Reminder
-				</Text>
-				<Switch
-					value={journalEnabled}
-					onValueChange={handleJournalNotificationToggle}
-					thumbColor={colors.accent}
-					trackColor={{ false: "#ccc", true: colors.accent }}
-				/>
-				{journalEnabled && (
-					<TouchableOpacity
-						onPress={() =>
-							setShowPicker({ type: "journal", visible: true })
-						}
-						style={{
-							marginTop: 12,
-							padding: 10,
-							borderRadius: 10,
-							borderWidth: 1,
-							borderColor: colors.border,
-							backgroundColor: colors.buttonBackground,
-						}}>
-						<Text
-							style={{
-								color: colors.buttonText,
-								textAlign: "center",
-							}}>
-							Change Time: {journalTime.toLocaleTimeString()}
-						</Text>
-					</TouchableOpacity>
-				)}
-			</Card>
+  const handleDreamCheckToggle = async (val: boolean) => {
+    if (val) {
+      Alert.alert(
+        "Enable Reality Checks",
+        "This will send you hourly reality check notifications. Would you like to continue?",
+        [
+          { text: "Cancel", style: "cancel" },
+          {
+            text: "Enable",
+            onPress: async () => {
+              setDreamCheckEnabled(true);
+              await scheduleHourlyChecks(startTime, endTime);
+              await saveSettings();
+            },
+          },
+        ]
+      );
+    } else {
+      Alert.alert(
+        "Disable Reality Checks",
+        "Are you sure you want to disable the reality check notifications?",
+        [
+          { text: "Cancel", style: "cancel" },
+          {
+            text: "Disable",
+            onPress: async () => {
+              setDreamCheckEnabled(false);
+              await cancelHourlyCheckNotifications();
+              await saveSettings();
+            },
+          },
+        ]
+      );
+    }
+  };
 
-			{/* Dream Reality Checks */}
-			<Card>
-				<Text
-					style={{
-						fontSize: 16,
-						color: colors.text,
-						fontFamily: fonts.bodyFont,
-						marginBottom: 10,
-					}}>
-					Reality Checks (Hourly)
-				</Text>
-				<Switch
-					value={dreamCheckEnabled}
-					onValueChange={handleDreamCheckToggle}
-					thumbColor={colors.accent}
-					trackColor={{ false: "#ccc", true: colors.accent }}
-				/>
-				{dreamCheckEnabled && (
-					<View style={{ marginTop: 10 }}>
-						<TouchableOpacity
-							onPress={() =>
-								setShowPicker({ type: "start", visible: true })
-							}
-							style={{
-								marginBottom: 10,
-								padding: 10,
-								borderRadius: 10,
-								borderWidth: 1,
-								borderColor: colors.border,
-								backgroundColor: colors.buttonBackground,
-							}}>
-							<Text
-								style={{
-									color: colors.buttonText,
-									textAlign: "center",
-								}}>
-								Start Time: {startTime.toLocaleTimeString()}
-							</Text>
-						</TouchableOpacity>
-						<TouchableOpacity
-							onPress={() =>
-								setShowPicker({ type: "end", visible: true })
-							}
-							style={{
-								marginBottom: 10,
-								padding: 10,
-								borderRadius: 10,
-								borderWidth: 1,
-								borderColor: colors.border,
-								backgroundColor: colors.buttonBackground,
-							}}>
-							<Text
-								style={{
-									color: colors.buttonText,
-									textAlign: "center",
-								}}>
-								End Time: {endTime.toLocaleTimeString()}
-							</Text>
-						</TouchableOpacity>
-						<Button
-							title="Apply Schedule"
-							onPress={applyDreamCheckSchedule}
-							color={colors.accent}
-						/>
-					</View>
-				)}
-			</Card>
+  // Custom Card component
+  const Card = ({ children }) => (
+    <View
+      style={{
+        backgroundColor: colors.cardBackground,
+        padding: 16,
+        borderRadius: 16,
+        marginBottom: 20,
+        shadowColor: colors.shadow,
+        shadowOpacity: 0.2,
+        shadowRadius: 6,
+        elevation: 3,
+      }}
+    >
+      {children}
+    </View>
+  );
 
-			{/* Dark Mode Toggle */}
-			<Card>
-				<Text
-					style={{
-						fontSize: 16,
-						color: colors.text,
-						fontFamily: fonts.bodyFont,
-						marginBottom: 10,
-					}}>
-					Dark Mode
-				</Text>
-				<Switch
-					value={mode === "dark"}
-					onValueChange={toggle}
-					thumbColor={colors.accent}
-					trackColor={{ false: "#ccc", true: colors.accent }}
-				/>
-			</Card>
+  return (
+    <ScrollView
+      contentContainerStyle={{
+        flexGrow: 1,
+        backgroundColor: colors.background,
+        padding: 20,
+      }}
+    >
+      <Text
+        style={{
+          fontSize: 28,
+          fontWeight: "bold",
+          color: colors.text,
+          fontFamily: fonts.headerFont,
+          marginBottom: 30,
+        }}
+      >
+        ⚙ Settings
+      </Text>
 
-			{/* Footer */}
-			<Text
-				style={{
-					color: colors.text,
-					fontSize: 12,
-					textAlign: "center",
-					marginTop: 10,
-					marginBottom: 30,
-				}}>
-				More settings coming soon: backup/sync, export dreams, custom
-				themes...
-			</Text>
+      {/* Dream Journal Reminder */}
+      <Card>
+        <Text
+          style={{
+            fontSize: 16,
+            color: colors.text,
+            fontFamily: fonts.bodyFont,
+            marginBottom: 10,
+          }}
+        >
+          Dream Journal Reminder
+        </Text>
+        <Switch
+          value={journalEnabled}
+          onValueChange={handleJournalToggle}
+          thumbColor={colors.accent}
+          trackColor={{ false: "#ccc", true: colors.accent }}
+        />
+        {journalEnabled && (
+          <TouchableOpacity
+            onPress={() => setShowPicker({ type: "journal", visible: true })}
+            style={{
+              marginTop: 12,
+              padding: 10,
+              borderRadius: 10,
+              borderWidth: 1,
+              borderColor: colors.border,
+              backgroundColor: colors.buttonBackground,
+            }}
+          >
+            <Text
+              style={{
+                color: colors.buttonText,
+                textAlign: "center",
+              }}
+            >
+              Change Time: {journalTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+            </Text>
+          </TouchableOpacity>
+        )}
+      </Card>
 
-			{/* Time Picker */}
-			{showPicker.visible && (
-				<DateTimePicker
-					value={new Date()}
-					mode="time"
-					display={Platform.OS === "ios" ? "spinner" : "default"}
-					onChange={handleTimeChange}
-				/>
-			)}
-		</ScrollView>
-	);
+      {/* Dream Reality Checks */}
+      <Card>
+        <Text
+          style={{
+            fontSize: 16,
+            color: colors.text,
+            fontFamily: fonts.bodyFont,
+            marginBottom: 10,
+          }}
+        >
+          Reality Checks (Hourly)
+        </Text>
+        <Switch
+          value={dreamCheckEnabled}
+          onValueChange={handleDreamCheckToggle}
+          thumbColor={colors.accent}
+          trackColor={{ false: "#ccc", true: colors.accent }}
+        />
+        {dreamCheckEnabled && (
+          <View style={{ marginTop: 10 }}>
+            <TouchableOpacity
+              onPress={() => setShowPicker({ type: "start", visible: true })}
+              style={{
+                marginBottom: 10,
+                padding: 10,
+                borderRadius: 10,
+                borderWidth: 1,
+                borderColor: colors.border,
+                backgroundColor: colors.buttonBackground,
+              }}
+            >
+              <Text
+                style={{
+                  color: colors.buttonText,
+                  textAlign: "center",
+                }}
+              >
+                Start Time: {startTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+              </Text>
+            </TouchableOpacity>
+            
+            <TouchableOpacity
+              onPress={() => setShowPicker({ type: "end", visible: true })}
+              style={{
+                marginBottom: 10,
+                padding: 10,
+                borderRadius: 10,
+                borderWidth: 1,
+                borderColor: colors.border,
+                backgroundColor: colors.buttonBackground,
+              }}
+            >
+              <Text
+                style={{
+                  color: colors.buttonText,
+                  textAlign: "center",
+                }}
+              >
+                End Time: {endTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+              </Text>
+            </TouchableOpacity>
+            
+            <Button
+              title="Apply Schedule"
+              onPress={applyDreamCheckSchedule}
+              color={colors.accent}
+            />
+          </View>
+        )}
+      </Card>
+
+      {/* Dark Mode Toggle */}
+      <Card>
+        <Text
+          style={{
+            fontSize: 16,
+            color: colors.text,
+            fontFamily: fonts.bodyFont,
+            marginBottom: 10,
+          }}
+        >
+          Dark Mode
+        </Text>
+        <Switch
+          value={mode === "dark"}
+          onValueChange={toggle}
+          thumbColor={colors.accent}
+          trackColor={{ false: "#ccc", true: colors.accent }}
+        />
+      </Card>
+
+      {/* Footer */}
+      <Text
+        style={{
+          color: colors.text,
+          fontSize: 12,
+          textAlign: "center",
+          marginTop: 10,
+          marginBottom: 30,
+        }}
+      >
+        More settings coming soon: backup/sync, export dreams, custom themes...
+      </Text>
+
+      {/* Time Picker */}
+      {showPicker.visible && (
+        <DateTimePicker
+          value={
+            showPicker.type === 'journal'
+              ? journalTime
+              : showPicker.type === 'start'
+                ? startTime
+                : endTime
+          }
+          mode="time"
+          display={Platform.OS === "ios" ? "spinner" : "default"}
+          onChange={handleTimeChange}
+        />
+      )}
+    </ScrollView>
+  );
 }
