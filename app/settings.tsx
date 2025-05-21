@@ -1,16 +1,18 @@
-import {
-	View,
-	Text,
-	Switch,
-	Button,
-	Platform,
-	TouchableOpacity,
-	ScrollView,
-} from "react-native";
-import { useTheme } from "../theme/ThemeContext";
-import { useState, useEffect } from "react";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import DateTimePicker from "@react-native-community/datetimepicker";
 import * as Notifications from "expo-notifications";
+import { useEffect, useState } from "react";
+import {
+	Alert,
+	Button,
+	Platform,
+	ScrollView,
+	Switch,
+	Text,
+	TouchableOpacity,
+	View,
+} from "react-native";
+import { useTheme } from "../theme/ThemeContext";
 
 export default function Settings() {
 	const { mode, toggle, colors, fonts } = useTheme();
@@ -28,7 +30,39 @@ export default function Settings() {
 
 	useEffect(() => {
 		Notifications.requestPermissionsAsync();
+		loadNotificationSettings();
 	}, []);
+
+	const loadNotificationSettings = async () => {
+		try {
+			const settings = await AsyncStorage.getItem('notificationSettings');
+			if (settings) {
+				const { journalEnabled: savedJournalEnabled, dreamCheckEnabled: savedDreamCheckEnabled, journalTime: savedJournalTime, startTime: savedStartTime, endTime: savedEndTime } = JSON.parse(settings);
+				setJournalEnabled(savedJournalEnabled);
+				setDreamCheckEnabled(savedDreamCheckEnabled);
+				if (savedJournalTime) setJournalTime(new Date(savedJournalTime));
+				if (savedStartTime) setStartTime(new Date(savedStartTime));
+				if (savedEndTime) setEndTime(new Date(savedEndTime));
+			}
+		} catch (error) {
+			console.error('Error loading notification settings:', error);
+		}
+	};
+
+	const saveNotificationSettings = async () => {
+		try {
+			const settings = {
+				journalEnabled,
+				dreamCheckEnabled,
+				journalTime: journalTime.toISOString(),
+				startTime: startTime.toISOString(),
+				endTime: endTime.toISOString(),
+			};
+			await AsyncStorage.setItem('notificationSettings', JSON.stringify(settings));
+		} catch (error) {
+			console.error('Error saving notification settings:', error);
+		}
+	};
 
 	const scheduleJournalNotification = async (time) => {
 		await Notifications.cancelAllScheduledNotificationsAsync();
@@ -43,6 +77,7 @@ export default function Settings() {
 				repeats: true,
 			},
 		});
+		await saveNotificationSettings();
 	};
 
 	const scheduleHourlyChecks = async (start, end) => {
@@ -63,6 +98,7 @@ export default function Settings() {
 				},
 			});
 		}
+		await saveNotificationSettings();
 	};
 
 	const handleTimeChange = (event, selectedDate) => {
@@ -86,6 +122,90 @@ export default function Settings() {
 	const applyDreamCheckSchedule = () => {
 		if (dreamCheckEnabled) {
 			scheduleHourlyChecks(startTime, endTime);
+		}
+	};
+
+	const handleJournalNotificationToggle = async (val: boolean) => {
+		if (val) {
+			Alert.alert(
+				"Enable Journal Reminder",
+				"This will send you a daily reminder to write down your dreams. Would you like to continue?",
+				[
+					{
+						text: "Cancel",
+						style: "cancel",
+						onPress: () => setJournalEnabled(false),
+					},
+					{
+						text: "Enable",
+						onPress: async () => {
+							await scheduleJournalNotification(journalTime);
+							await saveNotificationSettings();
+						},
+					},
+				]
+			);
+		} else {
+			Alert.alert(
+				"Disable Journal Reminder",
+				"Are you sure you want to disable the journal reminder?",
+				[
+					{
+						text: "Cancel",
+						style: "cancel",
+						onPress: () => setJournalEnabled(true),
+					},
+					{
+						text: "Disable",
+						onPress: async () => {
+							await Notifications.cancelAllScheduledNotificationsAsync();
+							await saveNotificationSettings();
+						},
+					},
+				]
+			);
+		}
+	};
+
+	const handleDreamCheckToggle = async (val: boolean) => {
+		if (val) {
+			Alert.alert(
+				"Enable Reality Checks",
+				"This will send you hourly reality check notifications. Would you like to continue?",
+				[
+					{
+						text: "Cancel",
+						style: "cancel",
+						onPress: () => setDreamCheckEnabled(false),
+					},
+					{
+						text: "Enable",
+						onPress: async () => {
+							await scheduleHourlyChecks(startTime, endTime);
+							await saveNotificationSettings();
+						},
+					},
+				]
+			);
+		} else {
+			Alert.alert(
+				"Disable Reality Checks",
+				"Are you sure you want to disable the reality check notifications?",
+				[
+					{
+						text: "Cancel",
+						style: "cancel",
+						onPress: () => setDreamCheckEnabled(true),
+					},
+					{
+						text: "Disable",
+						onPress: async () => {
+							await Notifications.cancelAllScheduledNotificationsAsync();
+							await saveNotificationSettings();
+						},
+					},
+				]
+			);
 		}
 	};
 
@@ -136,12 +256,7 @@ export default function Settings() {
 				</Text>
 				<Switch
 					value={journalEnabled}
-					onValueChange={(val) => {
-						setJournalEnabled(val);
-						if (val) scheduleJournalNotification(journalTime);
-						else
-							Notifications.cancelAllScheduledNotificationsAsync();
-					}}
+					onValueChange={handleJournalNotificationToggle}
 					thumbColor={colors.accent}
 					trackColor={{ false: "#ccc", true: colors.accent }}
 				/>
@@ -182,12 +297,7 @@ export default function Settings() {
 				</Text>
 				<Switch
 					value={dreamCheckEnabled}
-					onValueChange={(val) => {
-						setDreamCheckEnabled(val);
-						if (val) scheduleHourlyChecks(startTime, endTime);
-						else
-							Notifications.cancelAllScheduledNotificationsAsync();
-					}}
+					onValueChange={handleDreamCheckToggle}
 					thumbColor={colors.accent}
 					trackColor={{ false: "#ccc", true: colors.accent }}
 				/>
